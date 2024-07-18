@@ -240,7 +240,7 @@ class CodeBrowser(App, uicallback):
     root: str
     symbol_query = LspQuery("", "")
     codeview_file: str
-    search_result: SearchResults
+    search_result: SearchResults  = SearchResults([])
     # symbol_listview: MyListView
     history_view: MyListView
     lsp: LspMain
@@ -868,7 +868,8 @@ class CodeBrowser(App, uicallback):
         pass
 
     def on_code_message_impl(self, message: code_message_impl):
-        file_location = self.lsp.client(message.location).get_impl(message.location)
+        file_location = self.lsp.client(
+            message.location).get_impl(message.location)
         if file_location is None:
             return
         self.on_choose_file_from_event(from_file(file_location.uri),
@@ -881,7 +882,8 @@ class CodeBrowser(App, uicallback):
 
     def on_code_message_decl(self, message: code_message_decl):
         try:
-            ret = self.lsp.client(location=message.location).get_decl(message.location)
+            ret = self.lsp.client(
+                location=message.location).get_decl(message.location)
             if ret is None:
                 return
             self.on_choose_file_from_event(from_file(ret.uri), ret)
