@@ -553,6 +553,7 @@ class project_config:
 
 
 class lspcppclient:
+    languageId=LanguageIdentifier.CPP
     lsp_client: Optional[LspClient2] = None
 
     def get_refer_from_cursor(self, loc: Location,
@@ -681,7 +682,7 @@ class lspcppclient:
         if self.lsp_client != None:
             ret = self.lsp_client.didOpen(
                 TextDocumentItem(uri=uri,
-                                 languageId=LanguageIdentifier.CPP,
+                                 languageId=self.languageId,
                                  version=version,
                                  text=text))
         return SourceCode(relative_file_path, self)
@@ -733,6 +734,7 @@ class lspcppclient_clangd(lspcppclient):
 
 
 class lspcppclient_pylsp(lspcppclient):
+    languageId=LanguageIdentifier.PYTHON
     def __init__(self, config: project_config,
                  json_rpc_endpoint: pylspclient.JsonRpcEndpoint) -> None:
         lsp_endpoint = pylspclient.LspEndpoint(json_rpc_endpoint)
@@ -796,7 +798,7 @@ class lspcppserver_clangd(lspcppserver):
 class lspcppserver_pylsp(lspcppserver):
     def __init__(self, root):
         pylsp_cmd = ["python", "-m", "pylsp"]
-        self.p = subprocess.Popen(pylsp_cmd, stdin=subprocess.PIPE,
+        self.p = p = subprocess.Popen(pylsp_cmd, stdin=subprocess.PIPE,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         read_pipe = ReadPipe(self.p.stderr)
@@ -805,7 +807,7 @@ class lspcppserver_pylsp(lspcppserver):
             p.stdin, p.stdout)  # type: ignore
 
     def newclient(self, confg: project_config) -> lspcppclient:
-        return lspcppclient_clangd(confg, self.json_rpc_endpoint)
+        return lspcppclient_pylsp(confg, self.json_rpc_endpoint)
 
 
 # DEFAULT_ROOT = path.abspath("./tests/test-workspace/cpp")
@@ -1134,7 +1136,9 @@ class SourceCode:
 
 class _lspfactory:
     clang_client: Optional[lspcppclient] = None
-    clang_server: Optional[lspcppserver_clangd] = None
+    pyclient: Optional[lspcppclient] = None
+    clang_server: Optional[lspcppserver] = None
+    pylsp_srv: Optional[lspcppserver] = None
 
     def __init__(self, root: str) -> None:
         self.cfg = project_config(workspace_root=root)
@@ -1147,11 +1151,20 @@ class _lspfactory:
             self.clang_server = lspcppserver_clangd(self.root)
             self.clang_client = self.clang_server.newclient(self.cfg)
         return self.clang_client
-
+    def __pythonclient(self):
+        try:
+            if self.pyclient is None:
+                self.pylsp_srv= lspcppserver_pylsp(self.root)
+                self.pyclient= self.pylsp_srv.newclient(self.cfg)
+            return self.pyclient
+        except Exception as e:
+            return None
     def get_client(self, file):
         ext = file.split(".")[-1]
         if ext in ["h", "hpp", "cc", "cpp", "cxx", "c"]:
             return self.__clangclient()
+        if ext in ["py"]:
+            return self.__pythonclient()
         return lspcppclient()
 
     def close(self):

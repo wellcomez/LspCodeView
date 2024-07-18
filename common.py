@@ -47,7 +47,7 @@ def from_file(path: str) -> str:
 
 def to_file(path: str) -> str:
     if getext(path) in use_uri:
-        return to_file(path)
+        return to_uri(path)
     if path.startswith("file://"):
         return path
     return f"file://{path}"
