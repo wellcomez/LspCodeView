@@ -532,10 +532,9 @@ class project_config:
     #             client.open_file(a["file"])
 
     def create_workspace(
-        self,
-        client: 'lspcppclient',
+        self
     ) -> 'WorkSpaceSymbol':
-        wk = WorkSpaceSymbol(self.workspace_root, client=client)
+        wk = WorkSpaceSymbol(self.workspace_root)
         # if add == False:
         #     return wk
         # if self.compile_database is None:
@@ -552,10 +551,12 @@ class project_config:
 
 
 class lspcppclient:
-    lsp_client: LspClient2
+    lsp_client: Optional[LspClient2] = None
 
     def get_refer_from_cursor(self, loc: Location,
                               text: str) -> list[SymbolLocation]:
+        if self.lsp_client is None:
+            return []
         file = from_file(loc.uri)
         col = loc.range.start.character
         line = loc.range.start.line
@@ -565,6 +566,8 @@ class lspcppclient:
         return list(map(lambda x: SymbolLocation(loc=x, name=name), ret))
 
     def get_impl(self, loc: Location) -> Location | None:
+        if self.lsp_client is None:
+            return None
         ret = self.lsp_client.definition(
             textDocument=TextDocumentIdentifier(uri=loc.uri),
             position=loc.range.start)
@@ -576,6 +579,8 @@ class lspcppclient:
         return None
 
     def get_decl(self, loc: Location) -> Location | None:
+        if self.lsp_client is None:
+            return None
         ret = self.lsp_client.declaration(
             textDocument=TextDocumentIdentifier(uri=loc.uri),
             position=loc.range.start)
@@ -586,6 +591,90 @@ class lspcppclient:
                 return ret[0]
         return None
 
+    def close(self):
+        if self.lsp_client != None:
+            self.lsp_client.exit()
+
+    def get_class_symbol(self, file) -> list[Symbol]:
+        ret = []
+        symbols = self.get_document_symbol(file)
+        while len(symbols):
+            s = symbols[0]
+            if s.kind == SymbolKind.Class or s.kind == SymbolKind.Struct:
+                s1 = Symbol(s)
+                symbols = s1.find_members(symbols[1:], ret)
+                ret.append(s1)
+                continue
+            elif s.kind == SymbolKind.Function:
+                s1 = Symbol(s)
+                ret.append(s1)
+            elif s.kind == SymbolKind.Method:
+                s1 = Symbol(s)
+                ret.append(s1)
+            symbols = symbols[1:]
+        return ret
+
+    def get_document_symbol(self, file: str) -> list[SymbolInformation]:
+        if self.lsp_client is None:
+            return []
+        x = TextDocumentIdentifier(uri=to_file(file))
+        symbol = self.lsp_client.documentSymbol(x)
+        return symbol  # type: ignore
+
+    def get_symbol_reference(self,
+                             symbol: SymbolInformation) -> list[Location]:
+        if self.lsp_client is None:
+            return []
+        s = SymbolParser(symbol)
+        is_cpp = False
+        try:
+            file = from_file(symbol.location.uri)
+            is_cpp = file.split(".")[-1].lower() in ["cc", "cpp", "cxx"]
+        except Exception as e:
+            logger.exception(str(e))
+            pass
+        decal = None
+        if is_cpp:
+            try:
+                decal = self.lsp_client.declaration(
+                    textDocument=TextDocumentIdentifier(
+                        uri=symbol.location.uri),
+                    position=Position(
+                        line=s.symbol_line,
+                        character=s.symbol_col))[0]  # type: ignore
+            except Exception as e:
+                logger.exception(e)
+                pass
+
+        rets = self.get_reference(symbol.location.uri, s.symbol_col,
+                                  s.symbol_line)
+
+        def filter_head(x: Location):
+            try:
+                if decal != None:
+                    if x.uri == decal.uri and x.range.start.line == decal.range.start.line:  # type: ignore
+                        return False
+            except Exception as e:
+                logger.exception(e)
+                pass
+            return True
+
+        return list(filter(filter_head, rets))
+
+    def get_reference(self, file, col: int, line: int) -> list[Location]:
+        if self.lsp_client is None:
+            return []
+        return self.lsp_client.references(file, col, line)
+
+    def open_file(self, file):
+        relative_file_path = file
+        import os
+        if os.path.isabs(file) == False:
+            raise Exception("path should be absolute path")
+        return SourceCode(relative_file_path, self)
+
+
+class lspcppclient_clangd(lspcppclient):
     def __init__(self, config: project_config,
                  json_rpc_endpoint: pylspclient.JsonRpcEndpoint) -> None:
         lsp_endpoint = LspEndpoint(json_rpc_endpoint)
@@ -629,74 +718,6 @@ class lspcppclient:
         self.lsp_client = lsp_client
         pass
 
-    def close(self):
-        self.lsp_client.exit()
-
-    def get_class_symbol(self, file) -> list[Symbol]:
-        ret = []
-        symbols = self.get_document_symbol(file)
-        while len(symbols):
-            s = symbols[0]
-            if s.kind == SymbolKind.Class or s.kind == SymbolKind.Struct:
-                s1 = Symbol(s)
-                symbols = s1.find_members(symbols[1:], ret)
-                ret.append(s1)
-                continue
-            elif s.kind == SymbolKind.Function:
-                s1 = Symbol(s)
-                ret.append(s1)
-            elif s.kind == SymbolKind.Method:
-                s1 = Symbol(s)
-                ret.append(s1)
-            symbols = symbols[1:]
-        return ret
-
-    def get_document_symbol(self, file: str) -> list[SymbolInformation]:
-        x = TextDocumentIdentifier(uri=to_file(file))
-        symbol = self.lsp_client.documentSymbol(x)
-        return symbol  # type: ignore
-
-    def get_symbol_reference(self,
-                             symbol: SymbolInformation) -> list[Location]:
-        s = SymbolParser(symbol)
-        is_cpp = False
-        try:
-            file = from_file(symbol.location.uri)
-            is_cpp = file.split(".")[-1].lower() in ["cc", "cpp", "cxx"]
-        except Exception as e:
-            logger.exception(str(e))
-            pass
-        decal = None
-        if is_cpp:
-            try:
-                decal = self.lsp_client.declaration(
-                    textDocument=TextDocumentIdentifier(
-                        uri=symbol.location.uri),
-                    position=Position(
-                        line=s.symbol_line,
-                        character=s.symbol_col))[0]  # type: ignore
-            except Exception as e:
-                logger.exception(e)
-                pass
-
-        rets = self.get_reference(symbol.location.uri, s.symbol_col,
-                                  s.symbol_line)
-
-        def filter_head(x: Location):
-            try:
-                if decal != None:
-                    if x.uri == decal.uri and x.range.start.line == decal.range.start.line:  # type: ignore
-                        return False
-            except Exception as e:
-                logger.exception(e)
-                pass
-            return True
-
-        return list(filter(filter_head, rets))
-
-    def get_reference(self, file, col: int, line: int) -> list[Location]:
-        return self.lsp_client.references(file, col, line)
-
     def open_file(self, file):
         uri = to_file(file)
         relative_file_path = file
@@ -706,15 +727,16 @@ class lspcppclient:
         uri = to_file(relative_file_path)
         text = open(relative_file_path, "r").read()
         version = 2
-        ret = self.lsp_client.didOpen(
-            TextDocumentItem(uri=uri,
-                             languageId=LanguageIdentifier.CPP,
-                             version=version,
-                             text=text))
+        if self.lsp_client != None:
+            ret = self.lsp_client.didOpen(
+                TextDocumentItem(uri=uri,
+                                 languageId=LanguageIdentifier.CPP,
+                                 version=version,
+                                 text=text))
         return SourceCode(relative_file_path, self)
 
 
-class lspcppserver:
+class lspcppserver_clangd:
     process = None
 
     def __init__(self, root):
@@ -735,7 +757,7 @@ class lspcppserver:
             p.stdin, p.stdout)  # type: ignore
 
     def newclient(self, confg: project_config) -> lspcppclient:
-        return lspcppclient(confg, self.json_rpc_endpoint)
+        return lspcppclient_clangd(confg, self.json_rpc_endpoint)
 
 
 # DEFAULT_ROOT = path.abspath("./tests/test-workspace/cpp")
@@ -1056,21 +1078,57 @@ class SourceCode:
         return None
 
 
-class WorkSpaceSymbol:
-    client: lspcppclient
+class _lspfactory:
+    clang_client: Optional[lspcppclient] = None
+    clang_server: Optional[lspcppserver_clangd] = None
 
-    def __init__(self, root: str, client: lspcppclient) -> None:
+    def __init__(self, root: str) -> None:
+        self.cfg = project_config(workspace_root=root)
+        self.root = root
+
+        pass
+
+    def __clangclient(self):
+        if self.clang_client is None:
+            self.clang_server = lspcppserver_clangd(self.root)
+            self.clang_client = self.clang_server.newclient(self.cfg)
+        return self.clang_client
+
+    def get_client(self, file):
+        ext = file.split(".")[-1]
+        if ext in ["h", "hpp", "cc", "cpp", "cxx", "c"]:
+            return self.__clangclient()
+        return lspcppclient()
+
+    def close(self):
+        if self.clang_client:
+            self.clang_client.close()
+            self.clang_client = None
+        self.clang_server = None
+
+
+class WorkSpaceSymbol:
+    factory: _lspfactory
+
+    def __init__(self, root: str) -> None:
         self.source_list = {}
         self.root = root
-        self.client = client
         global work_space_root
         work_space_root = root
+        self.factory = _lspfactory(root)
+
         pass
+
+    def close(self):
+        self.factory.close()
+
+    def client(self, lang) -> lspcppclient:
+        return self.factory.get_client(lang)
 
     def create_source(self, file) -> 'SourceCode':
         if file in self.source_list.keys():
             return self.source_list[file]
-        return self.client.open_file(file)
+        return self.client(file).open_file(file)
 
     def get_source(self, file) -> Optional['SourceCode']:
         return self.source_list[file]
@@ -1129,7 +1187,7 @@ class WorkSpaceSymbol:
         except Exception as e:
             logger.exception(str(e))
         try:
-            self.add(self.client.open_file(key))
+            self.add(self.client(key).open_file(key))
             return self.find(node)
         except Exception as e:
             logger.exception(str(e))
@@ -1576,15 +1634,13 @@ class LspMain:
             file = os.path.join(root, file)
         print(root, file)
         cfg = project_config(workspace_root=root)
-        srv = lspcppserver(cfg.workspace_root)
-        client = srv.newclient(cfg)
-        wk = cfg.create_workspace(client)
-        s = client.lsp_client.process()
-        print(s)
+        wk = cfg.create_workspace()
         self.wk = wk
-        self.client = client
         self.root = root
         self.changefile(file)
+
+    def client(self, location: Location):
+        return self.wk.client(from_file(location.uri))
 
     def find_symbol_file(self, file: str) -> Optional[SymbolFile]:
         for f in self.opened_files:
@@ -1602,15 +1658,10 @@ class LspMain:
         return self.currentfile
 
     def __del__(self):
-        if self.client is None:
-            return
-        self.client.close()
+        self.wk.close()
 
     def close(self):
-        if self.client is None:
-            return
-        self.client.close()
-        self.client = None
+        self.wk.close()
 
 
 # python lspcpp.py  --root /home/z/dev/lsp/pylspclient/tests/cpp --file /home/z/dev/lsp/pylspclient/tests/cpp/test_main.cpp -m a::run

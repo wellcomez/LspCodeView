@@ -202,12 +202,11 @@ class vim:
         return self.app.cmdline.value
 
     def move_focus(self):
-        app = self.app
-        f = app.screen.focused
-        if f == app.cmdline:
-            f = app.CodeView.textarea
-        app.preview_focused = f
-        app.cmdline.focus()
+        f = self.app.screen.focused
+        if f == self.app.cmdline:
+            f = self.app.CodeView.textarea
+        self.preview_focused = f
+        self.app.cmdline.focus()
 
     def enter_find(self):
         if self.vi.escape:
@@ -572,13 +571,9 @@ class CodeBrowser(App, uicallback):
                 for i in range(len(self.callin.findresult)):
                     self.generic_search_mgr.add(i)
             else:
-                self.generic_search_mgr.get_next()
-            self.callin.goto_next()
+                self.callin.goto_next()
             pass
-        f.update(" ".join([
-            str(self.generic_search_mgr), ""
-            if self.preview_focused is None else str(self.preview_focused.id)
-        ]))
+        f.update(str(self.generic_search_mgr))
 
     def on_vi_command(self, value: str):
         try:
@@ -873,9 +868,7 @@ class CodeBrowser(App, uicallback):
         pass
 
     def on_code_message_impl(self, message: code_message_impl):
-        if self.lsp.client is None:
-            return
-        file_location = self.lsp.client.get_impl(message.location)
+        file_location = self.lsp.client(message.location).get_impl(message.location)
         if file_location is None:
             return
         self.on_choose_file_from_event(from_file(file_location.uri),
@@ -887,10 +880,8 @@ class CodeBrowser(App, uicallback):
         pass
 
     def on_code_message_decl(self, message: code_message_decl):
-        if self.lsp.client is None:
-            return
         try:
-            ret = self.lsp.client.get_decl(message.location)
+            ret = self.lsp.client(location=message.location).get_decl(message.location)
             if ret is None:
                 return
             self.on_choose_file_from_event(from_file(ret.uri), ret)
@@ -903,14 +894,14 @@ class CodeBrowser(App, uicallback):
     def on_code_message_refer(self, message: code_message_refer):
         try:
 
-            def cursor_refer(client, message: code_message_refer):
+            def cursor_refer(lsp, message: code_message_refer):
                 s = message.selection
                 loc = message.location()
-                ret = client.get_refer_from_cursor(loc, s.text)
+                ret = lsp.client(loc).get_refer_from_cursor(loc, s.text)
 
                 self.post_message(refermessage(ret, message.key))
 
-            ThreadPoolExecutor(1).submit(cursor_refer, self.lsp.client,
+            ThreadPoolExecutor(1).submit(cursor_refer, self.lsp,
                                          message)
             pass
 
