@@ -240,36 +240,31 @@ class CodeBrowser(App, uicallback):
     root: str
     symbol_query = LspQuery("", "")
     codeview_file: str
-    search_result: SearchResults  = SearchResults([])
-    # symbol_listview: MyListView
-    history_view: MyListView
+    search_result: SearchResults = SearchResults([])
+    history_view = MyListView(id="history")
     lsp: LspMain
-    callin: callinview
-    preview_focused: Optional[Widget]
-    generic_search_mgr: generic_search
+    callin: callinview = callinview()
+    preview_focused: Optional[Widget] = None
+    generic_search_mgr = generic_search(None, "")
     _symbolload: symbolload
+    CodeView = CodeView()
+    uml = ResultTree()
+    symbol_tree_view = _symbol_tree_view()
+    history = history()
+    symbol_listview_type = SYMBOL_LISTVIEW_TYPE
+    tofile: Optional[OutputFile] = None
+    toUml: Optional[OutputFile] = None
 
     def __init__(self, root, file):
         App.__init__(self)
-        self.thread = None
         self.lsp = LspMain(root=root, file=file)
         self.root = root
-        self.tofile = None
-        self.toUml = None
         self.codeview_file = self.sub_title = file
         self.soucecode = SourceCode(self.codeview_file)
-        self.history = history()
         self.backforward = BackFoward(self.history)
         self.history.add_to_history(self.codeview_file)
-        self.symbol_listview_type = SYMBOL_LISTVIEW_TYPE
-        self.CodeView = CodeView()
-        self.callin = callinview()
         self.taskmanager = TaskManager()
-        self.preview_focused = None
-        self.generic_search_mgr = generic_search(None, "")
         self._symbolload = symbolload("", self.lsp)
-        self.symbol_tree_view = _symbol_tree_view()
-        self.uml = ResultTree()
         self.uml.update()
 
     def on_callinopen(self, msg: callinopen) -> None:
