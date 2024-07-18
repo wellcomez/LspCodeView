@@ -23,6 +23,8 @@ from cpp_impl import LspFuncParameter, LspFuncParameter_cpp
 from common import Body, SubLine, from_file, location_to_filename, range_before, to_file, where_is_bin
 import logging
 
+from common import to_uri
+
 logger = logging.getLogger('lsppython')
 print(logger)
 logger.critical("lspcpp begined")
@@ -593,6 +595,7 @@ class lspcppclient:
 
     def close(self):
         if self.lsp_client != None:
+            self.lsp_client.shutdown()
             self.lsp_client.exit()
 
     def get_class_symbol(self, file) -> list[Symbol]:
@@ -667,10 +670,20 @@ class lspcppclient:
         return self.lsp_client.references(file, col, line)
 
     def open_file(self, file):
+        uri = to_file(file)
         relative_file_path = file
         import os
         if os.path.isabs(file) == False:
             raise Exception("path should be absolute path")
+        uri = to_file(relative_file_path)
+        text = open(relative_file_path, "r").read()
+        version = 2
+        if self.lsp_client != None:
+            ret = self.lsp_client.didOpen(
+                TextDocumentItem(uri=uri,
+                                 languageId=LanguageIdentifier.CPP,
+                                 version=version,
+                                 text=text))
         return SourceCode(relative_file_path, self)
 
 
@@ -718,27 +731,45 @@ class lspcppclient_clangd(lspcppclient):
         self.lsp_client = lsp_client
         pass
 
-    def open_file(self, file):
-        uri = to_file(file)
-        relative_file_path = file
-        import os
-        if os.path.isabs(file) == False:
-            raise Exception("path should be absolute path")
-        uri = to_file(relative_file_path)
-        text = open(relative_file_path, "r").read()
-        version = 2
-        if self.lsp_client != None:
-            ret = self.lsp_client.didOpen(
-                TextDocumentItem(uri=uri,
-                                 languageId=LanguageIdentifier.CPP,
-                                 version=version,
-                                 text=text))
-        return SourceCode(relative_file_path, self)
+
+class lspcppclient_pylsp(lspcppclient):
+    def __init__(self, config: project_config,
+                 json_rpc_endpoint: pylspclient.JsonRpcEndpoint) -> None:
+        lsp_endpoint = pylspclient.LspEndpoint(json_rpc_endpoint)
+        lsp_client = LspClient2(lsp_endpoint)
+        process_id = None
+        root_path = None
+        root_uri = to_uri(config.workspace_root)
+        initialization_options = None
+        DEFAULT_CAPABILITIES = {
+            'textDocument': {
+                'completion': {
+                    'completionItem': {
+                        'commitCharactersSupport': True,
+                        'documentationFormat': ['markdown', 'plaintext'],
+                        'snippetSupport': True
+                    }
+                }
+            }
+        }
+        capabilities = DEFAULT_CAPABILITIES
+        trace = "off"
+        workspace_folders = None
+        initialize_response = lsp_client.initialize(
+            process_id, root_path, root_uri, initialization_options, capabilities, trace, workspace_folders)
+        if initialize_response['serverInfo']['name'] != 'pylsp':
+            raise RuntimeError("failed to initialize lsp_client")
+        lsp_client.initialized()
+        self.lsp_client = lsp_client
+        pass
 
 
-class lspcppserver_clangd:
-    process = None
-
+class lspcppserver:
+    p:subprocess.Popen
+    def close(self):
+        self.p.communicate()
+        self.p.kill()
+class lspcppserver_clangd(lspcppserver):
     def __init__(self, root):
         cmd = [
             where_is_bin("clangd"),
@@ -751,7 +782,24 @@ class lspcppserver_clangd:
                              stdin=subprocess.PIPE,
                              stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE)
+        self.p = p
         read_pipe = ReadPipe(p.stderr)
+        read_pipe.start()
+        self.json_rpc_endpoint = pylspclient.JsonRpcEndpoint(
+            p.stdin, p.stdout)  # type: ignore
+    def newclient(self, confg: project_config) -> lspcppclient:
+        return lspcppclient_clangd(confg, self.json_rpc_endpoint)
+
+    
+
+
+class lspcppserver_pylsp(lspcppserver):
+    def __init__(self, root):
+        pylsp_cmd = ["python", "-m", "pylsp"]
+        self.p = subprocess.Popen(pylsp_cmd, stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        read_pipe = ReadPipe(self.p.stderr)
         read_pipe.start()
         self.json_rpc_endpoint = pylspclient.JsonRpcEndpoint(
             p.stdin, p.stdout)  # type: ignore
@@ -1051,8 +1099,8 @@ class SourceCode:
         self.symbols = client.get_document_symbol(file)
         self.class_symbol = client.get_class_symbol(file)
         self.client = client
-        
-        if self.client.lsp_client!=None:
+
+        if self.client.lsp_client != None:
             try:
                 self.tokenFull = self.client.lsp_client.document_semantictokens_full(
                     self.file)
@@ -1110,7 +1158,8 @@ class _lspfactory:
         if self.clang_client:
             self.clang_client.close()
             self.clang_client = None
-        self.clang_server = None
+        if self.clang_server!=None:
+            self.clang_server.close() 
 
 
 class WorkSpaceSymbol:
