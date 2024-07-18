@@ -278,6 +278,7 @@ class callinview:
                     child.remove()
                     break
         root_call_tree = RootCallTreeNode(job, jobid=jobid)
+        self.tree.root.expand()
         root = self.tree.root.add(job.method.name,
                                   expand=True,
                                   data=root_call_tree)
