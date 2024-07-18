@@ -1007,6 +1007,8 @@ class CallerWalker:
 
         has = list(filter(lambda x: x.range == param.range, self.caller_set))
         self.caller_set.append(param)
+        if self.client.lsp_client == None:
+            return []
         parent = self.client.lsp_client.callIncoming(param)
         caller = list(map(lambda x: CallNode(x), parent))
         if once:
@@ -1025,6 +1027,8 @@ class CallerWalker:
 
     def get_caller(self, sym: Symbol, once=False) -> list[CallNode]:
         if sym.is_function() or sym.is_method() or sym.is_construct():
+            if self.client.lsp_client == None:
+                return []
             ctx = self.client.lsp_client.callHierarchyPrepare(sym.sym)
             callser: list[CallNode] = []
             for a in ctx:
@@ -1047,14 +1051,16 @@ class SourceCode:
         self.symbols = client.get_document_symbol(file)
         self.class_symbol = client.get_class_symbol(file)
         self.client = client
-        try:
-            self.tokenFull = self.client.lsp_client.document_semantictokens_full(
-                self.file)
-            self.tokenDelta = self.client.lsp_client.document_semantictokens_delta(
-                self.file, self.tokenFull)
-        except Exception as e:
-            logger.exception(str(e))
-            pass
+        
+        if self.client.lsp_client!=None:
+            try:
+                self.tokenFull = self.client.lsp_client.document_semantictokens_full(
+                    self.file)
+                self.tokenDelta = self.client.lsp_client.document_semantictokens_delta(
+                    self.file, self.tokenFull)
+            except Exception as e:
+                logger.exception(str(e))
+                pass
         pass
 
     def find(self, node: CallNode) -> Union[Symbol, None]:
