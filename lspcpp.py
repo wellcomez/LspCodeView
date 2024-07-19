@@ -694,7 +694,7 @@ class lspcppclient:
 class lspcppclient_clangd(lspcppclient):
     def __init__(self, config: project_config,
                  json_rpc_endpoint: pylspclient.JsonRpcEndpoint,
-                 _lspconfig: lspconfig_clangd) -> None:
+                 _lspconfig: lspconfig) -> None:
         lsp_endpoint = LspEndpoint(json_rpc_endpoint)
         lsp_client = LspClient2(lsp_endpoint)
         process_id = None
@@ -770,56 +770,52 @@ class lspcppclient_pylsp(lspcppclient):
         pass
 
 
-class lspcppserver:
+class lsp_server:
     _lspconfig: lspconfig
     p: subprocess.Popen
+    cmd = []
+    json_rpc_endpoint: pylspclient.JsonRpcEndpoint
 
     def __init__(self, lspconfig: lspconfig) -> None:
         self._lspconfig = lspconfig
+        self.cmd = lspconfig.cmd
         pass
 
-    def close(self):
-        self.p.communicate()
-        self.p.kill()
-
-
-class lspcppserver_clangd(lspcppserver):
-    def __init__(self, root, lspconfig: lspconfig):
-        super().__init__(lspconfig=lspconfig)
-        cmd = [
-            where_is_bin("clangd"),
-            "--compile-commands-dir=%s" % (root), "--background-index",
-            "--background-index-priority=normal", "-j", "4"
-            # "--log=verbose",
-            # "--background-index"
-        ]
-        p = subprocess.Popen(cmd,
-                             stdin=subprocess.PIPE,
-                             stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE)
-        self.p = p
-        read_pipe = ReadPipe(p.stderr)
-        read_pipe.start()
-        self.json_rpc_endpoint = pylspclient.JsonRpcEndpoint(
-            p.stdin, p.stdout)  # type: ignore
-        self._lspconfig = lspconfig_clangd()
-
-    def newclient(self, confg: project_config) -> lspcppclient:
-        # type: ignore
-        return lspcppclient_clangd(confg, self.json_rpc_endpoint, self._lspconfig)
-
-
-class lspcppserver_pylsp(lspcppserver):
-    def __init__(self, root, lspconfig: lspconfig):
-        super().__init__(lspconfig=lspconfig)
-        pylsp_cmd = ["python", "-m", "pylsp"]
-        self.p = p = subprocess.Popen(pylsp_cmd, stdin=subprocess.PIPE,
+    def start(self):
+        self.p = p = subprocess.Popen(self.cmd, stdin=subprocess.PIPE,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         read_pipe = ReadPipe(self.p.stderr)
         read_pipe.start()
         self.json_rpc_endpoint = pylspclient.JsonRpcEndpoint(
             p.stdin, p.stdout)  # type: ignore
+
+    def close(self):
+        self.p.communicate()
+        self.p.kill()
+
+
+class lsp_server_cpp(lsp_server):
+    def __init__(self, root, lspconfig: lspconfig):
+        super().__init__(lspconfig=lspconfig)
+        self.cmd = [
+            where_is_bin("clangd"),
+            "--compile-commands-dir=%s" % (root), "--background-index",
+            "--background-index-priority=normal", "-j", "4"
+            # "--log=verbose",
+            # "--background-index"
+        ]
+        self.start()
+
+    def newclient(self, confg: project_config) -> lspcppclient:
+        # type: ignore
+        return lspcppclient_clangd(confg, self.json_rpc_endpoint, self._lspconfig)
+
+
+class lsp_server_python(lsp_server):
+    def __init__(self, root, lspconfig: lspconfig):
+        super().__init__(lspconfig=lspconfig)
+        self.start()
 
     def newclient(self, confg: project_config) -> lspcppclient:
         return lspcppclient_pylsp(confg, self.json_rpc_endpoint)
@@ -1150,14 +1146,14 @@ class SourceCode:
 
 
 class lspcs:
-    serv: lspcppserver
+    serv: lsp_server
     client: lspcppclient
 
     def close(self):
         self.client.close()
         self.serv.close()
 
-    def __init__(self, cls, lspconfig:lspconfig, cfg:project_config) -> None:
+    def __init__(self, cls, lspconfig: lspconfig, cfg: project_config) -> None:
         self.serv = cls(cfg, lspconfig)
         self.client = self.serv.newclient(cfg)  # type: ignore
         pass
@@ -1178,7 +1174,7 @@ class _lspfactory:
         def __clangclient():
             if self.cpp_cs is None:
                 try:
-                    self.cpp_cs = lspcs(cls=lspcppserver_clangd,
+                    self.cpp_cs = lspcs(cls=lsp_server_cpp,
                                         lspconfig=self.cpp, cfg=self.cfg)
                     return self.cpp_cs.client
                 except Exception as e:
@@ -1189,7 +1185,7 @@ class _lspfactory:
         def __pythonclient():
             if self.py_cs is None:
                 try:
-                    self.py_cs = lspcs(cls=lspcppserver_pylsp,
+                    self.py_cs = lspcs(cls=lsp_server_python,
                                        lspconfig=self.cpp, cfg=self.cfg)
                     return self.py_cs.client
                 except Exception as e:

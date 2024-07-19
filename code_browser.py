@@ -202,11 +202,7 @@ class vim:
         return self.app.cmdline.value
 
     def move_focus(self):
-        f = self.app.screen.focused
-        if f == self.app.cmdline:
-            f = self.app.CodeView.textarea
-        self.preview_focused = f
-        self.app.cmdline.focus()
+        self.app.move_focus()
 
     def enter_find(self):
         if self.vi.escape:
@@ -364,6 +360,13 @@ class CodeBrowser(App, uicallback):
     ]
 
     show_tree = var(True)
+
+    def move_focus(self):
+        f = self.screen.focused
+        if f == self.cmdline:
+            f = self.CodeView.textarea
+        self.preview_focused = f
+        self.cmdline.focus()
 
     def action_vim_insert_mode(self) -> None:
         self.vim.enter_insert()
@@ -565,10 +568,12 @@ class CodeBrowser(App, uicallback):
                 self.callin.find_text(key)
                 for i in range(len(self.callin.findresult)):
                     self.generic_search_mgr.add(i)
+                self.callin.goto_next()
             else:
                 self.callin.goto_next()
             pass
-        f.update(str(self.generic_search_mgr))
+        xxx = self.preview_focused.id if self.preview_focused != None else "???"
+        f.update("|".join([str(self.generic_search_mgr), str(xxx)]))
 
     def on_vi_command(self, value: str):
         try:
