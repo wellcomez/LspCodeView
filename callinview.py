@@ -95,7 +95,7 @@ class _calltree(Tree, uicallback):
         pass
 
     def __init__(self):
-        Tree.__init__(self, "call heritage")
+        Tree.__init__(self, "call heritage",id="call-hierarchy")
 
     def action_toggle_node(self):
         pass

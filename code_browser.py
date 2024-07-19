@@ -376,6 +376,8 @@ class CodeBrowser(App, uicallback):
 
     def action_vim_escape(self) -> None:
         self.vim.enter_escape()
+        self.statusbar().update(
+            str(self.preview_focused.id if self.preview_focused != None else "")) 
 
     def action_vim_command_mode(self) -> None:
         self.vim.enter_command()
@@ -515,7 +517,7 @@ class CodeBrowser(App, uicallback):
             changed = True
         if changed == False:
             self.generic_search_mgr.get_next()
-        f: Label = self.query_one("#f1", Label)
+        f = self.statusbar()
 
         if self.preview_focused == self.symbol_tree_view:
             if changed:
@@ -574,6 +576,10 @@ class CodeBrowser(App, uicallback):
             pass
         xxx = self.preview_focused.id if self.preview_focused != None else "???"
         f.update("|".join([str(self.generic_search_mgr), str(xxx)]))
+
+    def statusbar(self):
+        f: Label = self.query_one("#f1", Label)
+        return f
 
     def on_vi_command(self, value: str):
         try:
