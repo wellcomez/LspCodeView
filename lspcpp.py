@@ -16,7 +16,7 @@ from pydantic import BaseModel, FailFast
 from config import config
 from lspconfig import lspconfig, lspconfig_clangd
 from lspconfig_go import lspconfgi_go
-from lspconfig_python import lspconfig_py
+from lspconfig_python import lspconfig_pylsp, lspconfig_pyright
 from planuml import planuml_to_image
 import pylspclient
 import threading
@@ -1149,33 +1149,53 @@ class SourceCode:
         return None
 
 
+class lspcs:
+    serv: lspcppserver
+    client: lspcppclient
+
+    def close(self):
+        self.client.close()
+        self.serv.close()
+
+    def __init__(self, cls, lspconfig:lspconfig, cfg:project_config) -> None:
+        self.serv = cls(cfg, lspconfig)
+        self.client = self.serv.newclient(cfg)  # type: ignore
+        pass
+
+
 class _lspfactory:
-    clang_client: Optional[lspcppclient] = None
-    pyclient: Optional[lspcppclient] = None
-    clang_server: Optional[lspcppserver] = None
-    pylsp_srv: Optional[lspcppserver] = None
+    cpp_cs: Optional[lspcs] = None
+    py_cs: Optional[lspcs] = None
 
     def __init__(self, root: str) -> None:
         self.cfg = project_config(workspace_root=root)
         self.root = root
         self.cpp = lspconfig_clangd()
-        self.py = lspconfig_py()
+        pylsp = True
+        self.py = lspconfig_pylsp() if pylsp else lspconfig_pyright()
         self.go = lspconfgi_go()
 
         def __clangclient():
-            if self.clang_client is None:
-                self.clang_server = lspcppserver_clangd(self.root, self.cpp)
-                self.clang_client = self.clang_server.newclient(self.cfg)
-            return self.clang_client
+            if self.cpp_cs is None:
+                try:
+                    self.cpp_cs = lspcs(cls=lspcppserver_clangd,
+                                        lspconfig=self.cpp, cfg=self.cfg)
+                    return self.cpp_cs.client
+                except Exception as e:
+                    pass
+            else:
+                return self.cpp_cs.client
 
         def __pythonclient():
-            try:
-                if self.pyclient is None:
-                    self.pylsp_srv = lspcppserver_pylsp(self.root, self.py)
-                    self.pyclient = self.pylsp_srv.newclient(self.cfg)
-                return self.pyclient
-            except Exception as e:
-                return None
+            if self.py_cs is None:
+                try:
+                    self.py_cs = lspcs(cls=lspcppserver_pylsp,
+                                       lspconfig=self.cpp, cfg=self.cfg)
+                    return self.py_cs.client
+                except Exception as e:
+                    return None
+            else:
+                return self.py_cs.client
 
         self.lspconfig = {
             # "go":(self.go,self.__clangclient),
@@ -1191,11 +1211,10 @@ class _lspfactory:
                 return config[1]()
 
     def close(self):
-        if self.clang_client:
-            self.clang_client.close()
-            self.clang_client = None
-        if self.clang_server != None:
-            self.clang_server.close()
+        if self.py_cs != None:
+            self.py_cs.close()
+        if self.cpp_cs != None:
+            self.cpp_cs.close()
 
 
 class WorkSpaceSymbol:
@@ -1214,7 +1233,7 @@ class WorkSpaceSymbol:
         self.factory.close()
 
     def client(self, lang) -> lspcppclient:
-        return self.factory.get_client(lang)
+        return self.factory.get_client(lang)  # type: ignore
 
     def create_source(self, file) -> 'SourceCode':
         if file in self.source_list.keys():
