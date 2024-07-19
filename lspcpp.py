@@ -14,6 +14,9 @@ from typing import Optional
 
 from pydantic import BaseModel, FailFast
 from config import config
+from lspconfig import lspconfig, lspconfig_clangd
+from lspconfig_go import lspconfgi_go
+from lspconfig_python import lspconfig_py
 from planuml import planuml_to_image
 import pylspclient
 import threading
@@ -553,7 +556,7 @@ class project_config:
 
 
 class lspcppclient:
-    languageId=LanguageIdentifier.CPP
+    languageId = LanguageIdentifier.CPP
     lsp_client: Optional[LspClient2] = None
 
     def get_refer_from_cursor(self, loc: Location,
@@ -690,7 +693,8 @@ class lspcppclient:
 
 class lspcppclient_clangd(lspcppclient):
     def __init__(self, config: project_config,
-                 json_rpc_endpoint: pylspclient.JsonRpcEndpoint) -> None:
+                 json_rpc_endpoint: pylspclient.JsonRpcEndpoint,
+                 _lspconfig: lspconfig_clangd) -> None:
         lsp_endpoint = LspEndpoint(json_rpc_endpoint)
         lsp_client = LspClient2(lsp_endpoint)
         process_id = None
@@ -734,7 +738,7 @@ class lspcppclient_clangd(lspcppclient):
 
 
 class lspcppclient_pylsp(lspcppclient):
-    languageId=LanguageIdentifier.PYTHON
+    languageId = LanguageIdentifier.PYTHON
     def __init__(self, config: project_config,
                  json_rpc_endpoint: pylspclient.JsonRpcEndpoint) -> None:
         lsp_endpoint = pylspclient.LspEndpoint(json_rpc_endpoint)
@@ -767,12 +771,21 @@ class lspcppclient_pylsp(lspcppclient):
 
 
 class lspcppserver:
-    p:subprocess.Popen
+    _lspconfig: lspconfig
+    p: subprocess.Popen
+
+    def __init__(self, lspconfig: lspconfig) -> None:
+        self._lspconfig = lspconfig
+        pass
+
     def close(self):
         self.p.communicate()
         self.p.kill()
+
+
 class lspcppserver_clangd(lspcppserver):
-    def __init__(self, root):
+    def __init__(self, root, lspconfig: lspconfig):
+        super().__init__(lspconfig=lspconfig)
         cmd = [
             where_is_bin("clangd"),
             "--compile-commands-dir=%s" % (root), "--background-index",
@@ -789,17 +802,19 @@ class lspcppserver_clangd(lspcppserver):
         read_pipe.start()
         self.json_rpc_endpoint = pylspclient.JsonRpcEndpoint(
             p.stdin, p.stdout)  # type: ignore
-    def newclient(self, confg: project_config) -> lspcppclient:
-        return lspcppclient_clangd(confg, self.json_rpc_endpoint)
+        self._lspconfig = lspconfig_clangd()
 
-    
+    def newclient(self, confg: project_config) -> lspcppclient:
+        # type: ignore
+        return lspcppclient_clangd(confg, self.json_rpc_endpoint, self._lspconfig)
 
 
 class lspcppserver_pylsp(lspcppserver):
-    def __init__(self, root):
+    def __init__(self, root, lspconfig: lspconfig):
+        super().__init__(lspconfig=lspconfig)
         pylsp_cmd = ["python", "-m", "pylsp"]
         self.p = p = subprocess.Popen(pylsp_cmd, stdin=subprocess.PIPE,
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         read_pipe = ReadPipe(self.p.stderr)
         read_pipe.start()
@@ -1143,36 +1158,44 @@ class _lspfactory:
     def __init__(self, root: str) -> None:
         self.cfg = project_config(workspace_root=root)
         self.root = root
+        self.cpp = lspconfig_clangd()
+        self.py = lspconfig_py()
+        self.go = lspconfgi_go()
 
+        def __clangclient():
+            if self.clang_client is None:
+                self.clang_server = lspcppserver_clangd(self.root, self.cpp)
+                self.clang_client = self.clang_server.newclient(self.cfg)
+            return self.clang_client
+
+        def __pythonclient():
+            try:
+                if self.pyclient is None:
+                    self.pylsp_srv = lspcppserver_pylsp(self.root, self.py)
+                    self.pyclient = self.pylsp_srv.newclient(self.cfg)
+                return self.pyclient
+            except Exception as e:
+                return None
+
+        self.lspconfig = {
+            # "go":(self.go,self.__clangclient),
+            "py": (self.py, __pythonclient),
+            "cpp": (self.cpp, __clangclient)
+        }
         pass
 
-    def __clangclient(self):
-        if self.clang_client is None:
-            self.clang_server = lspcppserver_clangd(self.root)
-            self.clang_client = self.clang_server.newclient(self.cfg)
-        return self.clang_client
-    def __pythonclient(self):
-        try:
-            if self.pyclient is None:
-                self.pylsp_srv= lspcppserver_pylsp(self.root)
-                self.pyclient= self.pylsp_srv.newclient(self.cfg)
-            return self.pyclient
-        except Exception as e:
-            return None
     def get_client(self, file):
-        ext = file.split(".")[-1]
-        if ext in ["h", "hpp", "cc", "cpp", "cxx", "c"]:
-            return self.__clangclient()
-        if ext in ["py"]:
-            return self.__pythonclient()
-        return lspcppclient()
+        for a in self.lspconfig:
+            config = self.lspconfig[a]
+            if config[0].is_me(file):
+                return config[1]()
 
     def close(self):
         if self.clang_client:
             self.clang_client.close()
             self.clang_client = None
-        if self.clang_server!=None:
-            self.clang_server.close() 
+        if self.clang_server != None:
+            self.clang_server.close()
 
 
 class WorkSpaceSymbol:

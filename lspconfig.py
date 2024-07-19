@@ -1,15 +1,3 @@
-root_files =
-
-
-def root_pattern(*patterns):
-    def find_root(fname):
-        for pattern in patterns:
-            if pattern in fname:
-                return True
-        return False
-    return find_root
-
-
 class lspconfig:
     cmd :list[str]= []
     file_extensions = ["cc", "cpp", "h", "hpp", "cxx", "hxx",
